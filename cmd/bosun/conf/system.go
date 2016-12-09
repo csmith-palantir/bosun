@@ -15,8 +15,8 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/bosun-monitor/annotate"
 	"github.com/influxdata/influxdb/client/v2"
-	"github.com/palantir/stacktrace"
 	"io/ioutil"
+	"errors"
 )
 
 // SystemConf contains all the information that bosun needs to run. Outside of the conf package
@@ -450,7 +450,7 @@ var defaultCipherSuites = []uint16{
 func (sc *SystemConf) loadTLSConfig() (*tls.Config, error) {
 	cert, err := tls.LoadX509KeyPair(sc.SecurityConf.SslCertificate, sc.SecurityConf.SslKey)
 	if err != nil {
-		return nil, stacktrace.Propagate(err, "Failed to load Certificate from cert file %v and key %v", sc.SecurityConf.SslCertificate, sc.SecurityConf.SslKey)
+		return nil, errors.New(fmt.Sprintf("Failed to load Certificate from cert file %v and key %v", sc.SecurityConf.SslCertificate, sc.SecurityConf.SslKey))
 	}
 	tlsConfig := &tls.Config{
 		Certificates:             []tls.Certificate{cert},
@@ -466,7 +466,7 @@ func (sc *SystemConf) loadTLSConfig() (*tls.Config, error) {
 
 	caCertPool, err := sc.buildCaCertPool()
 	if err != nil {
-		return nil, stacktrace.Propagate(err, "")
+		return nil, err
 	}
 
 	tlsConfig.RootCAs = caCertPool
@@ -480,7 +480,7 @@ func (sc *SystemConf) buildCaCertPool() (*x509.CertPool, error) {
 	for _, caFile := range sc.SecurityConf.SslCas {
 		cert, err := ioutil.ReadFile(caFile)
 		if err != nil {
-			return nil, stacktrace.Propagate(err, "Failed to load CA file from %v", caFile)
+			return nil, errors.New(fmt.Sprintf("Failed to load CA file from %v", caFile))
 		}
 
 		caCertPool.AppendCertsFromPEM(cert)

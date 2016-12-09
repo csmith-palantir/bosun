@@ -218,7 +218,11 @@ func main() {
 	ruleProvider.SetReload(reload)
 
 	go func() {
-		slog.Fatal(web.Listen(sysProvider.GetHTTPListen(), *flagDev, sysProvider.GetTSDBHost(), reload))
+		if systemConf.SecurityConf.ServeTls {
+			slog.Fatal(web.ListenTLS(systemConf.SecurityConf.SslCertificate, systemConf.SecurityConf.SslKey, sysProvider.GetHTTPListen(), *flagDev, sysProvider.GetTSDBHost(), reload))
+		} else {
+			slog.Fatal(web.Listen(sysProvider.GetHTTPListen(), *flagDev, sysProvider.GetTSDBHost(), reload))
+		}
 	}()
 	go func() {
 		if !*flagNoChecks {

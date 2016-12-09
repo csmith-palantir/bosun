@@ -12,11 +12,11 @@ import (
 	"bosun.org/opentsdb"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"github.com/BurntSushi/toml"
 	"github.com/bosun-monitor/annotate"
 	"github.com/influxdata/influxdb/client/v2"
 	"io/ioutil"
-	"errors"
 )
 
 // SystemConf contains all the information that bosun needs to run. Outside of the conf package
@@ -110,6 +110,7 @@ type SecurityConf struct {
 	SslCas         []string
 	SslKey         string
 	SslCertificate string
+	ServeTls       bool
 }
 
 // LogStashConf contains a list of elastic hosts for the depcrecated logstash functions

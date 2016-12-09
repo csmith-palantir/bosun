@@ -67,6 +67,16 @@ func init() {
 }
 
 func Listen(listenAddr string, devMode bool, tsdbHost string, reloadFunc func() error) error {
+	initHttp(listenAddr, devMode, tsdbHost, reloadFunc)
+	return http.ListenAndServe(listenAddr, nil)
+}
+
+func ListenTLS(certFile string, keyFile string, listenAddr string, devMode bool, tsdbHost string, reloadFunc func() error) error {
+	initHttp(listenAddr, devMode, tsdbHost, reloadFunc)
+	return http.ListenAndServeTLS(listenAddr, certFile, keyFile, nil)
+}
+
+func initHttp(listenAddr string, devMode bool, tsdbHost string, reloadFunc func() error) {
 	if devMode {
 		slog.Infoln("using local web assets")
 	}
@@ -173,7 +183,6 @@ func Listen(listenAddr string, devMode bool, tsdbHost string, reloadFunc func() 
 	http.Handle("/favicon.ico", fs)
 	slog.Infoln("bosun web listening on:", listenAddr)
 	slog.Infoln("tsdb host:", tsdbHost)
-	return http.ListenAndServe(listenAddr, nil)
 }
 
 type relayProxy struct {

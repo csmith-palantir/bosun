@@ -42,7 +42,7 @@ func TestSystemToml(t *testing.T) {
 		Headers: map[string]string{"X-Meow": "Mix"},
 	})
 	assert.Equal(t, sc.ElasticConf, ElasticConf{
-		Hosts: expr.ElasticHosts{"http://ny-lselastic01.example.com:9200", "http://ny-lselastic02.example.com:9200"},
+		Conf: expr.ElasticConf{"http://ny-lselastic01.example.com:9200", "http://ny-lselastic02.example.com:9200"},
 	})
 	assert.Equal(t, sc.AnnotateConf, AnnotateConf{
 		Hosts: []string{"http://ny-lselastic01.example.com:9200", "http://ny-lselastic02.example.com:9200"},

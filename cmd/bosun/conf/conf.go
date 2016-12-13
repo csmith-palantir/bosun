@@ -64,7 +64,7 @@ type SystemConfProvider interface {
 	GetTSDBHost() string
 
 	GetLogstashElasticHosts() expr.LogstashElasticHosts
-	GetAnnotateElasticHosts() expr.ElasticHosts
+	GetAnnotateElasticHosts() expr.ElasticConf
 	GetAnnotateIndex() string
 
 	// Contexts
@@ -72,7 +72,7 @@ type SystemConfProvider interface {
 	GetGraphiteContext() graphite.Context
 	GetInfluxContext() client.HTTPConfig
 	GetLogstashContext() expr.LogstashElasticHosts
-	GetElasticContext() expr.ElasticHosts
+	GetElasticContext() expr.ElasticConf
 	AnnotateEnabled() bool
 	GetAnnotateContext() annotate.Client // for function queries which will use the API
 

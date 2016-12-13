@@ -120,7 +120,10 @@ type LogStashConf struct {
 
 // ElasticConf contains configuration for an elastic host that Bosun can query
 type ElasticConf struct {
-	Hosts expr.ElasticHosts
+	Username string
+	Password string
+	UseTls   bool
+	Hosts    []string
 }
 
 // InfluxConf contains configuration for an influx host that Bosun can query
@@ -373,8 +376,10 @@ func (sc *SystemConf) GetLogstashElasticHosts() expr.LogstashElasticHosts {
 
 // GetAnnotateElasticHosts returns the Elastic hosts that should be used for annotations.
 // Annotations are not enabled if this has no hosts
-func (sc *SystemConf) GetAnnotateElasticHosts() expr.ElasticHosts {
-	return sc.AnnotateConf.Hosts
+func (sc *SystemConf) GetAnnotateElasticHosts() expr.ElasticConf {
+	return expr.ElasticConf{
+		Hosts: sc.AnnotateConf.Hosts,
+	}
 }
 
 // GetAnnotateIndex returns the name of the Elastic index that should be used for annotations
@@ -502,8 +507,20 @@ func (sc *SystemConf) GetLogstashContext() expr.LogstashElasticHosts {
 
 // GetElasticContext returns an Elastic context which contains all the information
 // needed to run Elastic queries.
-func (sc *SystemConf) GetElasticContext() expr.ElasticHosts {
-	return sc.ElasticConf.Hosts
+func (sc *SystemConf) GetElasticContext() expr.ElasticConf {
+	var tlsConfig *tls.Config
+	if sc.ElasticConf.UseTls {
+		var err error
+		if tlsConfig, err = sc.loadTLSConfig(); err != nil {
+			tlsConfig = nil
+		}
+	}
+	return expr.ElasticConf{
+		Hosts:     sc.ElasticConf.Hosts,
+		Username:  sc.ElasticConf.Username,
+		Password:  sc.ElasticConf.Password,
+		TlsConfig: tlsConfig,
+	}
 }
 
 // AnnotateEnabled returns if annotations have been enabled or not

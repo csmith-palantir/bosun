@@ -157,7 +157,7 @@ func initHttp(listenAddr string, devMode bool, tsdbHost string, reloadFunc func(
 		if index == "" {
 			index = "annotate"
 		}
-		annotateBackend = backend.NewElastic(schedule.SystemConf.GetAnnotateElasticHosts(), index)
+		annotateBackend = backend.NewElastic(schedule.SystemConf.GetAnnotateElasticHosts().Hosts, index)
 
 		go func() {
 			for {

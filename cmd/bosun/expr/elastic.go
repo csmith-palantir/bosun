@@ -13,6 +13,7 @@ import (
 	"github.com/MiniProfiler/go/miniprofiler"
 	"github.com/jinzhu/now"
 	elastic "gopkg.in/olivere/elastic.v3"
+	"net/http"
 )
 
 // This uses a global client since the elastic client handles connections
@@ -254,7 +255,13 @@ func (e ElasticConf) InitClient() error {
 		var clientOptions []elastic.ClientOptionFunc
 		clientOptions = append(clientOptions, elastic.SetURL(e.Hosts...), elastic.SetMaxRetries(10))
 		if e.TlsConfig != nil {
-			clientOptions = append(clientOptions, elastic.SetHttpClient(nil))
+			client := http.DefaultClient
+			client.Transport = &http.Transport{
+				Proxy:               http.ProxyFromEnvironment,
+				TLSClientConfig:     e.TlsConfig,
+				MaxIdleConnsPerHost: 32,
+			}
+			clientOptions = append(clientOptions, elastic.SetHttpClient(client))
 		}
 
 		if e.Username != "" && e.Password != "" {

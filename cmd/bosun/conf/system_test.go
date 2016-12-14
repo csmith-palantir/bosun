@@ -4,10 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"bosun.org/cmd/bosun/expr"
 	"bosun.org/opentsdb"
-
-	"net/url"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -42,7 +39,7 @@ func TestSystemToml(t *testing.T) {
 		Headers: map[string]string{"X-Meow": "Mix"},
 	})
 	assert.Equal(t, sc.ElasticConf, ElasticConf{
-		Hosts: expr.ElasticHosts{"http://ny-lselastic01.example.com:9200", "http://ny-lselastic02.example.com:9200"},
+		Hosts: []string{"http://ny-lselastic01.example.com:9200", "http://ny-lselastic02.example.com:9200"},
 	})
 	assert.Equal(t, sc.AnnotateConf, AnnotateConf{
 		Hosts: []string{"http://ny-lselastic01.example.com:9200", "http://ny-lselastic02.example.com:9200"},

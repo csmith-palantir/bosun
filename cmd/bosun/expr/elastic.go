@@ -253,16 +253,17 @@ func (e ElasticConf) InitClient() error {
 	if esClient == nil {
 		var err error
 		var clientOptions []elastic.ClientOptionFunc
-		clientOptions = append(clientOptions, elastic.SetURL(e.Hosts...), elastic.SetMaxRetries(10))
+		clientOptions = append(clientOptions, elastic.SetURL(e.Hosts...), elastic.SetMaxRetries(10), elastic.SetSniff(false))
+		var httpClient *http.Client
 		if e.TlsConfig != nil {
-			client := http.DefaultClient
-			client.Transport = &http.Transport{
-				Proxy:               http.ProxyFromEnvironment,
+			httpClient = &http.Client{}
+			httpClient.Transport = &http.Transport{
 				TLSClientConfig:     e.TlsConfig,
 				MaxIdleConnsPerHost: 32,
 			}
-			clientOptions = append(clientOptions, elastic.SetHttpClient(client))
+
 		}
+		clientOptions = append(clientOptions, elastic.SetHttpClient(httpClient))
 
 		if e.Username != "" && e.Password != "" {
 			clientOptions = append(clientOptions, elastic.SetBasicAuth(e.Username, e.Password))

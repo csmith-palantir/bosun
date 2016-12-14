@@ -19,6 +19,8 @@ import (
 	"io/ioutil"
 )
 
+var tlsConfig *tls.Config
+
 // SystemConf contains all the information that bosun needs to run. Outside of the conf package
 // usage should be through conf.SystemConfProvider
 type SystemConf struct {
@@ -436,6 +438,7 @@ func (sc *SystemConf) GetInfluxContext() client.HTTPConfig {
 	}
 	if sc.md.IsDefined("SecurityConf") {
 		if tlsConf, err := sc.loadTLSConfig(); err == nil {
+			tlsConf.InsecureSkipVerify = sc.InfluxConf.UnsafeSSL
 			c.TLSConfig = tlsConf
 		}
 	}
@@ -458,18 +461,17 @@ func (sc *SystemConf) loadTLSConfig() (*tls.Config, error) {
 	if err != nil {
 		return nil, errors.New(fmt.Sprintf("Failed to load Certificate from cert file %v and key %v", sc.SecurityConf.SslCertificate, sc.SecurityConf.SslKey))
 	}
-	tlsConfig := &tls.Config{
+	tlsConfig = &tls.Config{
 		Certificates:             []tls.Certificate{cert},
 		MinVersion:               tls.VersionTLS12,
 		PreferServerCipherSuites: true,
 		CipherSuites:             defaultCipherSuites,
-		InsecureSkipVerify:       sc.InfluxConf.UnsafeSSL,
+		InsecureSkipVerify:       false,
 	}
 
 	if len(sc.SecurityConf.SslCas) == 0 {
 		return tlsConfig, nil
 	}
-
 	caCertPool, err := sc.buildCaCertPool()
 	if err != nil {
 		return nil, err
@@ -509,7 +511,7 @@ func (sc *SystemConf) GetLogstashContext() expr.LogstashElasticHosts {
 // needed to run Elastic queries.
 func (sc *SystemConf) GetElasticContext() expr.ElasticConf {
 	var tlsConfig *tls.Config
-	if sc.ElasticConf.UseTls {
+	if sc.ElasticConf.UseTls && sc.md.IsDefined("SecurityConf") {
 		var err error
 		if tlsConfig, err = sc.loadTLSConfig(); err != nil {
 			tlsConfig = nil

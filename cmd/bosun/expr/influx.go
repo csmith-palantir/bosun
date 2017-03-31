@@ -13,6 +13,8 @@ import (
 	"github.com/influxdata/influxdb/client/v2"
 	"github.com/influxdata/influxdb/influxql"
 	influxModels "github.com/influxdata/influxdb/models"
+
+	"bosun.org/slog"
 )
 
 // Influx is a map of functions to query InfluxDB.
@@ -26,7 +28,8 @@ var Influx = map[string]parse.Func{
 }
 
 func influxTag(args []parse.Node) (parse.Tags, error) {
-        fmt.Println(args[1].(*parse.StringNode).Text)
+        slog.Infoln(args[1].(*parse.StringNode).Text)
+
 	st, err := influxql.ParseStatement(args[1].(*parse.StringNode).Text)
 	if err != nil {
 		return nil, err

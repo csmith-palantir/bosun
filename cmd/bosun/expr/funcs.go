@@ -34,6 +34,33 @@ func tagFirst(args []parse.Node) (parse.Tags, error) {
 	return args[0].Tags()
 }
 
+func tagRemove(args []parse.Node) (parse.Tags, error) {
+	tags, err := tagFirst(args)
+	if err != nil {
+		return nil, err
+	}
+	key := args[1].(*parse.StringNode).Text
+	delete(tags, key)
+	return tags, nil
+}
+
+func seriesFuncTags(args []parse.Node) (parse.Tags, error) {
+	t := make(parse.Tags)
+	text := args[0].(*parse.StringNode).Text
+	if text == "" {
+		return t, nil
+	}
+	ts, err := opentsdb.ParseTags(text)
+	if err != nil {
+		return nil, err
+	}
+
+	for k := range ts {
+		t[k] = struct{}{}
+	}
+	return t, nil
+}
+
 func tagTranspose(args []parse.Node) (parse.Tags, error) {
 	tags := make(parse.Tags)
 	sp := strings.Split(args[1].(*parse.StringNode).Text, ",")
@@ -180,14 +207,18 @@ var builtins = map[string]parse.Func{
 		Tags:   tagRename,
 		F:      AddTags,
 	},
-
 	"rename": {
 		Args:   []models.FuncType{models.TypeSeriesSet, models.TypeString},
 		Return: models.TypeSeriesSet,
 		Tags:   tagRename,
 		F:      Rename,
 	},
-
+	"remove": {
+		Args:   []models.FuncType{models.TypeSeriesSet, models.TypeString},
+		Return: models.TypeSeriesSet,
+		Tags:   tagRemove,
+		F:      Remove,
+	},
 	"t": {
 		Args:   []models.FuncType{models.TypeNumberSet, models.TypeString},
 		Return: models.TypeSeriesSet,
@@ -295,7 +326,7 @@ var builtins = map[string]parse.Func{
 		VArgsPos:  1,
 		VArgsOmit: true,
 		Return:    models.TypeSeriesSet,
-		Tags:      tagFirst,
+		Tags:      seriesFuncTags,
 		F:         SeriesFunc,
 	},
 	"sort": {
@@ -601,6 +632,22 @@ func Merge(e *State, T miniprofiler.Timer, series ...*Results) (*Results, error)
 		res.Results = append(res.Results, r.Results...)
 	}
 	return res, nil
+}
+
+func Remove(e *State, T miniprofiler.Timer, seriesSet *Results, tagKey string) (*Results, error) {
+	seen := make(map[string]bool)
+	for _, r := range seriesSet.Results {
+		if _, ok := r.Group[tagKey]; ok {
+			delete(r.Group, tagKey)
+			if _, ok := seen[r.Group.String()]; ok {
+				return seriesSet, fmt.Errorf("duplicate group would result from removing tag key: %v", tagKey)
+			}
+			seen[r.Group.String()] = true
+		} else {
+			return seriesSet, fmt.Errorf("tag key %v not found in result", tagKey)
+		}
+	}
+	return seriesSet, nil
 }
 
 func LeftJoin(e *State, T miniprofiler.Timer, keysCSV, columnsCSV string, rowData ...*Results) (*Results, error) {

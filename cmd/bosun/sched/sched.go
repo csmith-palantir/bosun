@@ -2,7 +2,7 @@ package sched // import "bosun.org/cmd/bosun/sched"
 
 import (
 	"fmt"
-	"reflect"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -19,9 +19,13 @@ import (
 	"bosun.org/opentsdb"
 	"bosun.org/slog"
 	"github.com/MiniProfiler/go/miniprofiler"
+	"github.com/bosun-monitor/annotate/backend"
 	"github.com/bradfitz/slice"
 	"github.com/kylebrandt/boolq"
 )
+
+// DefaultClient is the default http client for requests made from templates. It is configured in cmd/bosun/main.go
+var DefaultClient *http.Client
 
 func utcNow() time.Time {
 	return time.Now().UTC()
@@ -39,13 +43,15 @@ type Schedule struct {
 
 	Search *search.Search
 
+	annotate backend.Backend
+
 	skipLast bool
 	quiet    bool
 
 	//channel signals an alert has added notifications, and notifications should be processed.
 	nc chan interface{}
 	//notifications to be sent immediately
-	pendingNotifications map[*conf.Notification][]*models.IncidentState
+	pendingNotifications map[*conf.Notification][]*IncidentWithTemplates
 
 	//unknown states that need to be notified about. Collected and sent in batches.
 	pendingUnknowns map[*conf.Notification][]*models.IncidentState
@@ -67,7 +73,7 @@ type Schedule struct {
 	checksRunning sync.WaitGroup
 }
 
-func (s *Schedule) Init(systemConf conf.SystemConfProvider, ruleConf conf.RuleConfProvider, skipLast, quiet bool) error {
+func (s *Schedule) Init(systemConf conf.SystemConfProvider, ruleConf conf.RuleConfProvider, dataAccess database.DataAccess, annotate backend.Backend, skipLast, quiet bool) error {
 	//initialize all variables and collections so they are ready to use.
 	//this will be called once at app start, and also every time the rule
 	//page runs, so be careful not to spawn long running processes that can't
@@ -78,26 +84,16 @@ func (s *Schedule) Init(systemConf conf.SystemConfProvider, ruleConf conf.RuleCo
 	s.SystemConf = systemConf
 	s.RuleConf = ruleConf
 	s.Group = make(map[time.Time]models.AlertKeys)
+	s.annotate = annotate
 	s.pendingUnknowns = make(map[*conf.Notification][]*models.IncidentState)
 	s.lastLogTimes = make(map[models.AlertKey]time.Time)
 	s.LastCheck = utcNow()
 	s.ctx = &checkContext{utcNow(), cache.New(0)}
-
+	s.DataAccess = dataAccess
 	// Initialize the context and waitgroup used to gracefully shutdown bosun as well as reload
 	s.runnerContext, s.cancelChecks = context.WithCancel(context.Background())
 	s.checksRunning = sync.WaitGroup{}
 
-	if s.DataAccess == nil {
-		if systemConf.GetRedisHost() != "" {
-			s.DataAccess = database.NewDataAccess(systemConf.GetRedisHost(), true, systemConf.GetRedisDb(), systemConf.GetRedisPassword())
-		} else {
-			_, err := database.StartLedis(systemConf.GetLedisDir(), systemConf.GetLedisBindAddr())
-			if err != nil {
-				return err
-			}
-			s.DataAccess = database.NewDataAccess(systemConf.GetLedisBindAddr(), false, 0, "")
-		}
-	}
 	if s.Search == nil {
 		s.Search = search.NewSearch(s.DataAccess, skipLast)
 	}
@@ -153,13 +149,7 @@ func (s *Schedule) PutMetadata(k metadata.Metakey, v interface{}) error {
 		slog.Error(err)
 		return err
 	}
-	strVal, ok := v.(string)
-	if !ok {
-		err := fmt.Errorf("desc, rate, and unit require value to be string. Found: %s", reflect.TypeOf(v))
-		slog.Error(err)
-		return err
-	}
-	return s.DataAccess.Metadata().PutMetricMetadata(k.Metric, k.Name, strVal)
+	return s.DataAccess.Metadata().PutMetricMetadata(k.Metric, k.Name, fmt.Sprint(v))
 }
 
 func (s *Schedule) DeleteMetadata(tags opentsdb.TagSet, name string) error {
@@ -186,6 +176,9 @@ func (s *Schedule) GetMetadata(metric string, subset opentsdb.TagSet) ([]metadat
 		meta, err := s.MetadataMetrics(metric)
 		if err != nil {
 			return nil, err
+		}
+		if meta == nil {
+			return nil, fmt.Errorf("metadata for metric %v not found", metric)
 		}
 		if meta.Desc != "" {
 			ms = append(ms, metadata.Metasend{
@@ -439,9 +432,6 @@ func (s *Schedule) MarshalGroups(T miniprofiler.Timer, filter string) (*StateGro
 					}
 					for _, ak := range group {
 						st := status[ak]
-						st.Body = ""
-						st.EmailBody = nil
-						st.Attachments = nil
 						g.Children = append(g.Children, &StateGroup{
 							Active:   tuple.Active,
 							Status:   tuple.Status,
@@ -505,8 +495,8 @@ func marshalTime(t time.Time) string {
 var DefaultSched = &Schedule{}
 
 // Load loads a configuration into the default schedule.
-func Load(systemConf conf.SystemConfProvider, ruleConf conf.RuleConfProvider, skipLast, quiet bool) error {
-	return DefaultSched.Init(systemConf, ruleConf, skipLast, quiet)
+func Load(systemConf conf.SystemConfProvider, ruleConf conf.RuleConfProvider, dataAccess database.DataAccess, annotate backend.Backend, skipLast, quiet bool) error {
+	return DefaultSched.Init(systemConf, ruleConf, dataAccess, annotate, skipLast, quiet)
 }
 
 // Run runs the default schedule.

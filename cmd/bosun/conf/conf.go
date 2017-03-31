@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/bosun-monitor/annotate"
 	"github.com/influxdata/influxdb/client/v2"
 
 	"bosun.org/cmd/bosun/expr"
@@ -31,7 +30,9 @@ import (
 // outside of the package without a setter
 type SystemConfProvider interface {
 	GetHTTPListen() string
-	GetRelayListen() string
+	GetHTTPSListen() string
+	GetTLSCertFile() string
+	GetTLSKeyFile() string
 
 	GetSMTPHost() string
 	GetSMTPUsername() string // SMTP username
@@ -67,6 +68,8 @@ type SystemConfProvider interface {
 	GetAnnotateElasticHosts() expr.ElasticConf
 	GetAnnotateIndex() string
 
+	GetAuthConf() *AuthConf
+
 	// Contexts
 	GetTSDBContext() opentsdb.Context
 	GetGraphiteContext() graphite.Context
@@ -74,7 +77,6 @@ type SystemConfProvider interface {
 	GetLogstashContext() expr.LogstashElasticHosts
 	GetElasticContext() expr.ElasticConf
 	AnnotateEnabled() bool
-	GetAnnotateContext() annotate.Client // for function queries which will use the API
 
 	MakeLink(string, *url.Values) string
 	EnabledBackends() EnabledBackends
@@ -89,6 +91,9 @@ func ValidateSystemConf(sc SystemConfProvider) error {
 	}
 	if sc.GetDefaultRunEvery() <= 0 {
 		return fmt.Errorf("default run every must be greater than 0, is %v", sc.GetDefaultRunEvery())
+	}
+	if sc.GetHTTPSListen() != "" && (sc.GetTLSCertFile() == "" || sc.GetTLSKeyFile() == "") {
+		return fmt.Errorf("must specify TLSCertFile and TLSKeyFile if HTTPSListen is specified")
 	}
 	return nil
 }
@@ -332,7 +337,9 @@ type Macro struct {
 // sections of rule configuration are referenced by alerts including
 // Templates, Macros, and Notifications. Alerts hold the expressions
 // that determine the Severity of the Alert. There are also flags the
-// alter the behavior of the alert and how the expression is evaluated
+// alter the behavior of the alert and how the expression is evaluated.
+// This structure is available to users from templates. Consult documentation
+// before making changes
 type Alert struct {
 	Text string
 	Vars

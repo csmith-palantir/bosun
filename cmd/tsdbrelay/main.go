@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"compress/gzip"
 	"encoding/json"
+	_ "expvar"
 	"flag"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"net/http"
 	"net/http/httptest"
 	"net/http/httputil"
@@ -212,10 +214,11 @@ func (rw *relayWriter) WriteHeader(code int) {
 }
 
 var (
-	relayHeader = "X-Relayed-From"
-	encHeader   = "Content-Encoding"
-	typeHeader  = "Content-Type"
-	myHost      string
+	relayHeader  = "X-Relayed-From"
+	encHeader    = "Content-Encoding"
+	typeHeader   = "Content-Type"
+	accessHeader = "X-Access-Token"
+	myHost       string
 )
 
 func (rp *relayProxy) relayPut(responseWriter http.ResponseWriter, r *http.Request, parse bool) {
@@ -239,11 +242,16 @@ func (rp *relayProxy) relayPut(responseWriter http.ResponseWriter, r *http.Reque
 			verbose("bosun connect error: %v", err)
 			return
 		}
+		if access := r.Header.Get(accessHeader); access != "" {
+			req.Header.Set(accessHeader, access)
+		}
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			verbose("bosun relay error: %v", err)
 			return
 		}
+		// Drain up to 512 bytes and close the body to let the Transport reuse the connection
+		io.CopyN(ioutil.Discard, resp.Body, 512)
 		resp.Body.Close()
 		verbose("bosun relay success")
 	}()
@@ -265,6 +273,9 @@ func (rp *relayProxy) relayPut(responseWriter http.ResponseWriter, r *http.Reque
 				if contenttype := r.Header.Get(typeHeader); contenttype != "" {
 					req.Header.Set(typeHeader, contenttype)
 				}
+				if access := r.Header.Get(accessHeader); access != "" {
+					req.Header.Set(accessHeader, access)
+				}
 				if encoding := r.Header.Get(encHeader); encoding != "" {
 					req.Header.Set(encHeader, encoding)
 				}
@@ -275,6 +286,8 @@ func (rp *relayProxy) relayPut(responseWriter http.ResponseWriter, r *http.Reque
 					collect.Add("additional.puts.error", tags, 1)
 					continue
 				}
+				// Drain up to 512 bytes and close the body to let the Transport reuse the connection
+				io.CopyN(ioutil.Discard, resp.Body, 512)
 				resp.Body.Close()
 				verbose("secondary relay success")
 				collect.Add("additional.puts.relayed", tags, 1)
@@ -363,6 +376,9 @@ func (rp *relayProxy) relayMetadata(responseWriter http.ResponseWriter, r *http.
 				if contenttype := r.Header.Get(typeHeader); contenttype != "" {
 					req.Header.Set(typeHeader, contenttype)
 				}
+				if access := r.Header.Get(accessHeader); access != "" {
+					req.Header.Set(accessHeader, access)
+				}
 				if encoding := r.Header.Get(encHeader); encoding != "" {
 					req.Header.Set(encHeader, encoding)
 				}
@@ -372,6 +388,8 @@ func (rp *relayProxy) relayMetadata(responseWriter http.ResponseWriter, r *http.
 					verbose("secondary relay metadata error: %v", err)
 					continue
 				}
+				// Drain up to 512 bytes and close the body to let the Transport reuse the connection
+				io.CopyN(ioutil.Discard, resp.Body, 512)
 				resp.Body.Close()
 				verbose("secondary relay metadata success")
 			}

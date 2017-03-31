@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"html/template"
+	"io"
 	"io/ioutil"
 	"math"
 	"net/http"
@@ -61,6 +62,12 @@ func (s *Schedule) unknownData(t time.Time, name string, group models.AlertKeys)
 	}
 }
 
+// Note: All Context methods that can return nil must return literal nils
+// and not typed nils when returning errors to ensure that our global template
+// function notNil behaves correctly. Context Functions that return an object
+// that users can dereference return nils on errors. Ones that return images or
+// string just return the error message.
+
 // Ack returns the URL to acknowledge an alert.
 func (c *Context) Ack() string {
 	return c.schedule.SystemConf.MakeLink("/action", &url.Values{
@@ -106,14 +113,14 @@ func (c *Context) GraphLink(v string) string {
 	return c.schedule.SystemConf.MakeLink("/expr", &p)
 }
 
-func (c *Context) Rule() (string, error) {
+func (c *Context) Rule() string {
 	p := url.Values{}
 	time := c.runHistory.Start
 	p.Add("alert", c.Alert.Name)
 	p.Add("fromDate", time.Format("2006-01-02"))
 	p.Add("fromTime", time.Format("15:04"))
 	p.Add("template_group", c.Tags)
-	return c.schedule.SystemConf.MakeLink("/config", &p), nil
+	return c.schedule.SystemConf.MakeLink("/config", &p)
 }
 
 func (c *Context) Incident() string {
@@ -288,6 +295,16 @@ func (c *Context) addError(e error) {
 	c.Errors = append(c.Errors, e.Error())
 }
 
+// LastError gets the most recent error string for the context's
+// Error slice or returns an empty string if the error slice is
+// empty
+func (c *Context) LastError() string {
+	if len(c.Errors) > 0 {
+		return c.Errors[len(c.Errors)-1]
+	}
+	return ""
+}
+
 // Eval takes a result or an expression which it evaluates to a result.
 // It returns a value with tags corresponding to the context's tags.
 // If no such result is found, the first result with
@@ -383,23 +400,32 @@ func (c *Context) GraphAll(v interface{}, args ...string) interface{} {
 	return c.graph(v, unit, false)
 }
 
+// GetMeta fetches either metric metadata (if a metric name is provided)
+// or metadata about a tagset key by name
 func (c *Context) GetMeta(metric, name string, v interface{}) interface{} {
 	var t opentsdb.TagSet
 	switch v := v.(type) {
 	case string:
-		var err error
-		t, err = opentsdb.ParseTags(v)
-		if err != nil {
-			c.addError(err)
-			return nil
+		if v == "" {
+			t = make(opentsdb.TagSet)
+		} else {
+			var err error
+			t, err = opentsdb.ParseTags(v)
+			if err != nil {
+				c.addError(err)
+				return nil
+			}
 		}
 	case opentsdb.TagSet:
 		t = v
 	}
 	meta, err := c.schedule.GetMetadata(metric, t)
-	if err != nil {
+	if err != nil && name == "" {
 		c.addError(err)
 		return nil
+	}
+	if err != nil {
+		return err.Error()
 	}
 	if name == "" {
 		return meta
@@ -409,7 +435,7 @@ func (c *Context) GetMeta(metric, name string, v interface{}) interface{} {
 			return m.Value
 		}
 	}
-	return "metadta not found"
+	return "metadata not found"
 }
 
 // LeftJoin takes slices of results and expressions for which it gets the slices of results.
@@ -454,13 +480,15 @@ func (c *Context) LeftJoin(v ...interface{}) (interface{}, error) {
 }
 
 func (c *Context) HTTPGet(url string) string {
-	resp, err := http.Get(url)
+	resp, err := DefaultClient.Get(url)
 	if err != nil {
 		c.addError(err)
 		return err.Error()
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
+		// Drain up to 512 bytes and close the body to let the Transport reuse the connection
+		io.CopyN(ioutil.Discard, resp.Body, 512)
 		err := fmt.Errorf("%v: returned %v", url, resp.Status)
 		c.addError(err)
 		return err.Error()
@@ -480,8 +508,7 @@ func (c *Context) HTTPGetJSON(url string) *jsonq.JsonQuery {
 		return nil
 	}
 	req.Header.Set("Accept", "application/json")
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	resp, err := DefaultClient.Do(req)
 	if err != nil {
 		c.addError(err)
 		return nil
@@ -505,13 +532,15 @@ func (c *Context) HTTPGetJSON(url string) *jsonq.JsonQuery {
 }
 
 func (c *Context) HTTPPost(url, bodyType, data string) string {
-	resp, err := http.Post(url, bodyType, bytes.NewBufferString(data))
+	resp, err := DefaultClient.Post(url, bodyType, bytes.NewBufferString(data))
 	if err != nil {
 		c.addError(err)
 		return err.Error()
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
+		// Drain up to 512 bytes and close the body to let the Transport reuse the connection
+		io.CopyN(ioutil.Discard, resp.Body, 512)
 		return fmt.Sprintf("%v: returned %v", url, resp.Status)
 	}
 	body, err := ioutil.ReadAll(resp.Body)

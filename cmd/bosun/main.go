@@ -20,6 +20,7 @@ import (
 
 	"bosun.org/cmd/bosun/conf"
 	"bosun.org/cmd/bosun/conf/rule"
+	"bosun.org/cmd/bosun/database"
 	"bosun.org/cmd/bosun/ping"
 	"bosun.org/cmd/bosun/sched"
 	"bosun.org/cmd/bosun/web"
@@ -29,6 +30,7 @@ import (
 	"bosun.org/opentsdb"
 	"bosun.org/slog"
 	"bosun.org/util"
+	"github.com/bosun-monitor/annotate/backend"
 	"github.com/facebookgo/httpcontrol"
 	"gopkg.in/fsnotify.v1"
 )
@@ -46,7 +48,10 @@ func (t *bosunHttpTransport) RoundTrip(req *http.Request) (*http.Response, error
 	return t.RoundTripper.RoundTrip(req)
 }
 
+var startTime time.Time
+
 func init() {
+	startTime = time.Now().UTC()
 	client := &http.Client{
 		Transport: &bosunHttpTransport{
 			"Bosun/" + version.ShortVersion(),
@@ -65,6 +70,14 @@ func init() {
 			"Bosun/" + version.ShortVersion(),
 			&httpcontrol.Transport{
 				RequestTimeout: time.Minute,
+			},
+		},
+	}
+	sched.DefaultClient = &http.Client{
+		Transport: &bosunHttpTransport{
+			"Bosun/" + version.ShortVersion(),
+			&httpcontrol.Transport{
+				RequestTimeout: time.Second * 5,
 			},
 		},
 	}
@@ -109,32 +122,54 @@ func main() {
 		os.Exit(0)
 	}
 	var ruleProvider conf.RuleConfProvider = ruleConf
-	httpListen := &url.URL{
-		Scheme: "http",
-		Host:   sysProvider.GetHTTPListen(),
+
+	addrToSendTo := sysProvider.GetHTTPSListen()
+	proto := "https"
+	if addrToSendTo == "" {
+		addrToSendTo = sysProvider.GetHTTPListen()
+		proto = "http"
 	}
-	if strings.HasPrefix(httpListen.Host, ":") {
-		httpListen.Host = "localhost" + httpListen.Host
+	selfAddress := &url.URL{
+		Scheme: proto,
+		Host:   addrToSendTo,
 	}
-	if err := metadata.Init(httpListen, false); err != nil {
+	if strings.HasPrefix(selfAddress.Host, ":") {
+		selfAddress.Host = "localhost" + selfAddress.Host
+	}
+
+	da, err := initDataAccess(sysProvider)
+	if err != nil {
 		slog.Fatal(err)
 	}
-	if err := sched.Load(sysProvider, ruleProvider, *flagSkipLast, *flagQuiet); err != nil {
-		slog.Fatal(err)
-	}
-	if sysProvider.GetRelayListen() != "" {
+	var annotateBackend backend.Backend
+	if sysProvider.AnnotateEnabled() {
+		index := sysProvider.GetAnnotateIndex()
+		if index == "" {
+			index = "annotate"
+		}
+		annotateBackend = backend.NewElastic([]string(sysProvider.GetAnnotateElasticHosts()), false, index)
 		go func() {
-			mux := http.NewServeMux()
-			mux.Handle("/api/", util.NewSingleHostProxy(httpListen))
-			s := &http.Server{
-				Addr:    sysProvider.GetRelayListen(),
-				Handler: mux,
+			for {
+				err := annotateBackend.InitBackend()
+				if err == nil {
+					return
+				}
+				slog.Warningf("could not initialize annotate backend, will try again: %v", err)
+				time.Sleep(time.Second * 30)
 			}
-			slog.Fatal(s.ListenAndServe())
 		}()
+		web.AnnotateBackend = annotateBackend
+	}
+	if err := sched.Load(sysProvider, ruleProvider, da, annotateBackend, *flagSkipLast, *flagQuiet); err != nil {
+		slog.Fatal(err)
+	}
+	if err := metadata.InitF(false, func(k metadata.Metakey, v interface{}) error { return sched.DefaultSched.PutMetadata(k, v) }); err != nil {
+		slog.Fatal(err)
 	}
 	if sysProvider.GetTSDBHost() != "" {
-		if err := collect.Init(httpListen, "bosun"); err != nil {
+		relay := web.Relay(sysProvider.GetTSDBHost())
+		collect.DirectHandler = relay
+		if err := collect.Init(selfAddress, "bosun"); err != nil {
 			slog.Fatal(err)
 		}
 		tsdbHost := &url.URL{
@@ -191,17 +226,15 @@ func main() {
 		newConf.SetSaveHook(cmdHook)
 		newConf.SetReload(reload)
 		oldSched := sched.DefaultSched
-		oldDA := oldSched.DataAccess
 		oldSearch := oldSched.Search
 		sched.Close(true)
 		sched.Reset()
 		newSched := sched.DefaultSched
 		newSched.Search = oldSearch
-		newSched.DataAccess = oldDA
 		slog.Infoln("schedule shutdown, loading new schedule")
 
 		// Load does not set the DataAccess or Search if it is already set
-		if err := sched.Load(sysProvider, newConf, *flagSkipLast, *flagQuiet); err != nil {
+		if err := sched.Load(sysProvider, newConf, da, annotateBackend, *flagSkipLast, *flagQuiet); err != nil {
 			slog.Fatal(err)
 		}
 		web.ResetSchedule() // Signal web to point to the new DefaultSchedule
@@ -218,11 +251,9 @@ func main() {
 	ruleProvider.SetReload(reload)
 
 	go func() {
-		if systemConf.SecurityConf.ServeTls {
-			slog.Fatal(web.ListenTLS(systemConf.SecurityConf.SslCertificate, systemConf.SecurityConf.SslKey, sysProvider.GetHTTPListen(), *flagDev, sysProvider.GetTSDBHost(), reload))
-		} else {
-			slog.Fatal(web.Listen(sysProvider.GetHTTPListen(), *flagDev, sysProvider.GetTSDBHost(), reload))
-		}
+		slog.Fatal(web.Listen(sysProvider.GetHTTPListen(), sysProvider.GetHTTPSListen(),
+			sysProvider.GetTLSCertFile(), sysProvider.GetTLSKeyFile(), *flagDev,
+			sysProvider.GetTSDBHost(), reload, sysProvider.GetAuthConf(), startTime))
 	}()
 	go func() {
 		if !*flagNoChecks {
@@ -259,7 +290,23 @@ func main() {
 }
 
 func quit() {
+	slog.Error("Exiting")
 	os.Exit(0)
+}
+
+func initDataAccess(systemConf conf.SystemConfProvider) (database.DataAccess, error) {
+	var da database.DataAccess
+	if systemConf.GetRedisHost() != "" {
+		da = database.NewDataAccess(systemConf.GetRedisHost(), true, systemConf.GetRedisDb(), systemConf.GetRedisPassword())
+	} else {
+		_, err := database.StartLedis(systemConf.GetLedisDir(), systemConf.GetLedisBindAddr())
+		if err != nil {
+			return nil, err
+		}
+		da = database.NewDataAccess(systemConf.GetLedisBindAddr(), false, 0, "")
+	}
+	err := da.Migrate()
+	return da, err
 }
 
 func watch(root, pattern string, f func()) {

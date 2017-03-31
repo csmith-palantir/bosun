@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
 	"bosun.org/metadata"
 	"bosun.org/opentsdb"
+	"bosun.org/slog"
 	"bosun.org/util"
 	"github.com/StackExchange/mof"
 )
@@ -22,6 +24,9 @@ const (
 	dscLCM    = "dsc.lcm."
 	dscMof    = "dsc.mof."
 	dscStatus = "dsc.status."
+
+	//dscDefaultConfigurationName is used when the ConfigurationName value in the struct is NULL (non-pull based configuration usually)
+	dscDefaultConfigurationName = "__no_name__"
 )
 
 var (
@@ -82,17 +87,17 @@ func c_dsc_status() (opentsdb.MultiDataPoint, error) {
 		if err.Error() == "exit status 2147749889" {
 			return md, nil
 		} else {
-			return nil, err
+			return nil, slog.Wrap(err)
 		}
 	}
 	dscstatusbuffer := new(bytes.Buffer)
 	_, err = dscstatusbuffer.ReadFrom(dscstatusmof)
 	if err != nil {
-		return nil, err
+		return nil, slog.Wrap(err)
 	}
 	err = mof.Unmarshal(dscstatusbuffer.Bytes(), &dst)
 	if err != nil {
-		return nil, err
+		return nil, slog.Wrap(err)
 	}
 	if dst.ReturnValue != 0 {
 		return nil, fmt.Errorf("GetConfigurationStatus ReturnValue %v", dst.ReturnValue)
@@ -111,16 +116,18 @@ func c_dsc_status() (opentsdb.MultiDataPoint, error) {
 		Add(&md, dscStatus+"run_type", dscTypeToStatusCode(v.Type), nil, metadata.Gauge, metadata.Count, descWinDSCType)
 		configurations := make(map[string]dscResourceCount)
 		for _, r := range v.ResourcesInDesiredState {
-			c := configurations[r.ConfigurationName]
+			name := dscGetConfigurationName(r.ConfigurationName)
+			c := configurations[name]
 			c.Success++
 			c.Duration += r.DurationInSeconds
-			configurations[r.ConfigurationName] = c
+			configurations[name] = c
 		}
 		for _, r := range v.ResourcesNotInDesiredState {
-			c := configurations[r.ConfigurationName]
+			name := dscGetConfigurationName(r.ConfigurationName)
+			c := configurations[name]
 			c.Failed++
 			c.Duration += r.DurationInSeconds
-			configurations[r.ConfigurationName] = c
+			configurations[name] = c
 		}
 		for key, value := range configurations {
 			Add(&md, dscStatus+"resources", value.Success, opentsdb.TagSet{"state": "Success", "configuration": key}, metadata.Gauge, metadata.Count, descWinDSCResourceState)
@@ -227,9 +234,29 @@ func dscStateToStatusCode(t string) int64 {
 }
 
 func dscStartDateToAge(startdate string) float64 {
-	t, err := time.Parse("2006/01/02 15:04:05", startdate)
+	var t = time.Time{}
+	var err error
+	// See https://msdn.microsoft.com/en-us/library/aa387237(v=vs.85).aspx for different WMI date time formats
+	if len(startdate) == 25 && strings.IndexAny(startdate, "+-") == 21 {
+		//Parse yyyymmddHHMMSS.mmmmmmsUUU where sUUU is timezone in +/- minutes from UTC
+		tzmin, err := strconv.Atoi(startdate[21:])
+		if err != nil {
+			return -1
+		}
+		t, err = time.ParseInLocation("20060102150405.999999", startdate[0:21], time.FixedZone("WMI", tzmin*60))
+	} else {
+		//Parse yyyy-mm-dd HH:MM:SS:mmm and assume UTC
+		t, err = time.Parse("2006/01/02 15:04:05", startdate)
+	}
 	if err != nil {
 		return -1
 	}
-	return time.Now().Sub(t).Seconds()
+	return time.Now().UTC().Sub(t).Seconds()
+}
+
+func dscGetConfigurationName(Name string) string {
+	if Name != "" {
+		return Name
+	}
+	return dscDefaultConfigurationName
 }

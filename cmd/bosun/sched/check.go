@@ -74,7 +74,6 @@ func (s *Schedule) NewRunHistory(start time.Time, cache *cache.Cache) *RunHistor
 			InfluxConfig:    s.SystemConf.GetInfluxContext(),
 			LogstashHosts:   s.SystemConf.GetLogstashContext(),
 			ElasticHosts:    s.SystemConf.GetElasticContext(),
-			AnnotateContext: s.SystemConf.GetAnnotateContext(),
 		},
 	}
 	return r
@@ -117,16 +116,28 @@ func (s *Schedule) runHistory(r *RunHistory, ak models.AlertKey, event *models.E
 
 	// get existing open incident if exists
 	var incident *models.IncidentState
+	rt := &models.RenderedTemplates{}
+
 	incident, err = data.GetOpenIncident(ak)
 	if err != nil {
 		return
+	}
+	if incident != nil {
+		rt, err = data.GetRenderedTemplates(incident.Id)
+		if err != nil {
+			return
+		}
 	}
 	defer func() {
 		// save unless incident is new and closed (log alert)
 		if incident != nil && (incident.Id != 0 || incident.Open) {
 			_, err = data.UpdateIncidentState(incident)
+			err = data.SetRenderedTemplates(incident.Id, rt)
 		} else {
 			err = data.SetUnevaluated(ak, event.Unevaluated) // if nothing to save, at least store the unevaluated state
+			if err != nil {
+				return
+			}
 		}
 	}()
 	// If nothing is out of the ordinary we are done
@@ -183,7 +194,7 @@ func (s *Schedule) runHistory(r *RunHistory, ak models.AlertKey, event *models.E
 
 	//render templates and open alert key if abnormal
 	if event.Status > models.StNormal {
-		s.executeTemplates(incident, event, a, r)
+		s.executeTemplates(incident, rt, event, a, r)
 		incident.Open = true
 		if a.Log {
 			incident.Open = false
@@ -203,7 +214,7 @@ func (s *Schedule) runHistory(r *RunHistory, ak models.AlertKey, event *models.E
 		}
 		nots := ns.Get(s.RuleConf, incident.AlertKey.Group())
 		for _, n := range nots {
-			s.Notify(incident, n)
+			s.Notify(incident, rt, n)
 			checkNotify = true
 		}
 	}
@@ -256,7 +267,7 @@ func silencedOrIgnored(a *conf.Alert, event *models.Event, si *models.Silence) b
 	}
 	return false
 }
-func (s *Schedule) executeTemplates(state *models.IncidentState, event *models.Event, a *conf.Alert, r *RunHistory) {
+func (s *Schedule) executeTemplates(state *models.IncidentState, rt *models.RenderedTemplates, event *models.Event, a *conf.Alert, r *RunHistory) {
 	if event.Status != models.StUnknown {
 		var errs []error
 		metric := "template.render"
@@ -324,15 +335,15 @@ func (s *Schedule) executeTemplates(state *models.IncidentState, event *models.E
 			attachments = nil
 		}
 		state.Subject = string(subject)
-		state.Body = string(body)
+		rt.Body = string(body)
 		//don't save email seperately if they are identical
-		if string(state.EmailBody) != state.Body {
-			state.EmailBody = emailbody
+		if string(rt.EmailBody) != rt.Body {
+			rt.EmailBody = emailbody
 		}
-		if string(state.EmailSubject) != state.Subject {
-			state.EmailSubject = emailsubject
+		if string(rt.EmailSubject) != state.Subject {
+			rt.EmailSubject = emailsubject
 		}
-		state.Attachments = attachments
+		rt.Attachments = attachments
 	}
 }
 
@@ -514,7 +525,7 @@ func (s *Schedule) findUnknownAlerts(now time.Time, alert string) []models.Alert
 }
 
 func (s *Schedule) CheckAlert(T miniprofiler.Timer, r *RunHistory, a *conf.Alert) (cancelled bool) {
-	slog.Infof("check alert %v start", a.Name)
+	slog.Infof("check alert %v start with now set to %v", a.Name, r.Start.Format("2006-01-02 15:04:05.999999999"))
 	start := utcNow()
 	for _, ak := range s.findUnknownAlerts(r.Start, a.Name) {
 		r.Events[ak] = &models.Event{Status: models.StUnknown}
@@ -602,7 +613,7 @@ func markDependenciesUnevaluated(events map[models.AlertKey]*models.Event, deps 
 			continue
 		}
 		for _, dep := range deps {
-			if dep.Group.Overlaps(ak.Group()) {
+			if len(dep.Group) == 0 || dep.Group.Overlaps(ak.Group()) {
 				ev.Unevaluated = true
 				unevalCount++
 			}
@@ -623,6 +634,7 @@ func (s *Schedule) executeExpr(T miniprofiler.Timer, rh *RunHistory, a *conf.Ale
 		Search:    s.Search,
 		Squelched: s.RuleConf.AlertSquelched(a),
 		History:   s,
+		Annotate:  s.annotate,
 	}
 	results, _, err := e.Execute(rh.Backends, providers, T, rh.Start, 0, a.UnjoinedOK)
 	return results, err

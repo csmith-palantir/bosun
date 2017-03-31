@@ -14,7 +14,6 @@ import (
 	"crypto/x509"
 	"errors"
 	"github.com/BurntSushi/toml"
-	"github.com/bosun-monitor/annotate"
 	"github.com/influxdata/influxdb/client/v2"
 	"io/ioutil"
 )
@@ -24,8 +23,11 @@ var tlsConfig *tls.Config
 // SystemConf contains all the information that bosun needs to run. Outside of the conf package
 // usage should be through conf.SystemConfProvider
 type SystemConf struct {
-	HTTPListen    string
-	RelayListen   string
+	HTTPListen  string
+	HTTPSListen string
+	TLSCertFile string
+	TLSKeyFile  string
+
 	Hostname      string
 	Ping          bool
 	PingDuration  Duration // Duration from now to stop pinging hosts based on time since the host tag was touched
@@ -50,6 +52,8 @@ type SystemConf struct {
 	LogStashConf LogStashConf
 
 	AnnotateConf AnnotateConf
+
+	AuthConf *AuthConf
 
 	SecurityConf SecurityConf
 
@@ -158,6 +162,43 @@ type SMTPConf struct {
 	Password  string `json:"-"`
 }
 
+//AuthConf is configuration for bosun's authentication
+type AuthConf struct {
+	AuthDisabled bool
+	//Secret string to hash auth tokens. Needed to enable token auth.
+	TokenSecret string
+	//Secret sting used to encrypt cookie.
+	CookieSecret string
+	//LDAP configuration
+	LDAP LDAPConf
+}
+
+type LDAPConf struct {
+	// Domain name (used to make domain/username)
+	Domain string
+	// LDAP server
+	LdapAddr string
+	// allow insecure ldap connection?
+	AllowInsecure bool
+	// default permission level for anyone who can log in. Try "Reader".
+	DefaultPermission string
+	//List of group level permissions
+	Groups []LDAPGroup
+	//List of user specific permission levels
+	Users map[string]string
+	//Root search path for group lookups. Usually something like "DC=myorg,DC=com".
+	//Only needed if using group permissions
+	RootSearchPath string
+}
+
+//LDAPGroup is a Group level access specification for ldap
+type LDAPGroup struct {
+	// group search path string
+	Path string
+	// Access to grant members of group Ex: "Admin"
+	Role string
+}
+
 // GetSystemConfProvider returns the SystemConfProvider interface
 // and validates the logic of the configuration. If the configuration
 // is not valid an error is returned
@@ -169,12 +210,16 @@ func (sc *SystemConf) GetSystemConfProvider() (SystemConfProvider, error) {
 	return provider, nil
 }
 
+const (
+	defaultHTTPListen = ":8070"
+)
+
 // NewSystemConf retruns a system conf with default values set
 func newSystemConf() *SystemConf {
 	return &SystemConf{
 		CheckFrequency:  Duration{Duration: time.Minute * 5},
 		DefaultRunEvery: 1,
-		HTTPListen:      ":8070",
+		HTTPListen:      defaultHTTPListen,
 		DBConf: DBConf{
 			LedisDir:      "ledis_data",
 			LedisBindAddr: "127.0.0.1:9565",
@@ -217,6 +262,10 @@ func loadSystemConfig(conf string, isFileName bool) (*SystemConf, error) {
 		return sc, fmt.Errorf("undecoded fields in system configuration: %v", decodeMeta.Undecoded())
 	}
 	sc.md = decodeMeta
+	// clear default http listen if not explicitly specified
+	if !decodeMeta.IsDefined("HTTPListen") && decodeMeta.IsDefined("HTTPSListen") {
+		sc.HTTPListen = ""
+	}
 	return sc, nil
 }
 
@@ -225,10 +274,19 @@ func (sc *SystemConf) GetHTTPListen() string {
 	return sc.HTTPListen
 }
 
-// GetRelayListen returns an address on which bosun will listen and Proxy all requests to /api
-// it was added so one can make OpenTSDB API endpoints available at the same URL as Bosun.
-func (sc *SystemConf) GetRelayListen() string {
-	return sc.RelayListen
+// GetHTTPSListen returns the hostname:port that Bosun should listen on with tls
+func (sc *SystemConf) GetHTTPSListen() string {
+	return sc.HTTPSListen
+}
+
+// GetTLSCertFile returns the path to the tls certificate to listen with (pem format). Must be specified with HTTPSListen.
+func (sc *SystemConf) GetTLSCertFile() string {
+	return sc.TLSCertFile
+}
+
+// GetTLSKeyFile returns the path to the tls key to listen with (pem format). Must be specified with HTTPSListen.
+func (sc *SystemConf) GetTLSKeyFile() string {
+	return sc.TLSKeyFile
 }
 
 // GetSMTPHost returns the SMTP mail server host that Bosun will use to relay through
@@ -287,6 +345,10 @@ func (sc *SystemConf) GetRedisDb() int {
 // GetRedisPassword returns the password that should be used to connect to redis
 func (sc *SystemConf) GetRedisPassword() string {
 	return sc.DBConf.RedisPassword
+}
+
+func (sc *SystemConf) GetAuthConf() *AuthConf {
+	return sc.AuthConf
 }
 
 // GetTimeAndDate returns the http://www.timeanddate.com/ that should be available to the UI

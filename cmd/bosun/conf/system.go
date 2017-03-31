@@ -559,10 +559,6 @@ func (sc *SystemConf) buildCaCertPool() (*x509.CertPool, error) {
 	return caCertPool, nil
 }
 
-func (sc *SystemConf) GetAnnotateContext() annotate.Client {
-	return annotate.NewClient(fmt.Sprintf("http://%v/api", sc.HTTPListen)) // TODO Fix for HTTPS
-}
-
 // GetLogstashContext returns a Logstash context which contains all the information needed
 // to query Elastic for logstash style queries. This is deprecated
 func (sc *SystemConf) GetLogstashContext() expr.LogstashElasticHosts {

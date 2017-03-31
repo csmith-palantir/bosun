@@ -28,8 +28,6 @@ var Influx = map[string]parse.Func{
 }
 
 func influxTag(args []parse.Node) (parse.Tags, error) {
-        slog.Infoln(args[1].(*parse.StringNode).Text)
-
 	st, err := influxql.ParseStatement(args[1].(*parse.StringNode).Text)
 	if err != nil {
 		return nil, err
@@ -97,6 +95,8 @@ func InfluxQuery(e *State, T miniprofiler.Timer, db, query, startDuration, endDu
 
 // influxQueryDuration adds time WHERE clauses to query for the given start and end durations.
 func influxQueryDuration(now time.Time, query, start, end, groupByInterval string) (string, error) {
+        slog.Infoln(query)
+
 	sd, err := opentsdb.ParseDuration(start)
 	if err != nil {
 		return "", err

@@ -240,11 +240,14 @@ func ESLTE(e *State, T miniprofiler.Timer, key string, lte float64) (*Results, e
 // ElasticHosts is an array of Logstash hosts and exists as a type for something to attach
 // methods to.  The elasticsearch library will use the listed to hosts to discover all
 // of the hosts in the config
+type ElasticHosts []string
+
+// ElasticConf contains the information to connect to the elasticsearch cluster via authenticated TLS.
 type ElasticConf struct {
 	Username  string
 	Password  string
 	TlsConfig *tls.Config
-	Hosts     []string
+	Hosts     ElasticHosts
 }
 
 // InitClient sets up the elastic client. If the client has already been

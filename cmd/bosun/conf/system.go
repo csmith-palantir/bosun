@@ -440,10 +440,8 @@ func (sc *SystemConf) GetLogstashElasticHosts() expr.LogstashElasticHosts {
 
 // GetAnnotateElasticHosts returns the Elastic hosts that should be used for annotations.
 // Annotations are not enabled if this has no hosts
-func (sc *SystemConf) GetAnnotateElasticHosts() expr.ElasticConf {
-	return expr.ElasticConf{
-		Hosts: sc.AnnotateConf.Hosts,
-	}
+func (sc *SystemConf) GetAnnotateElasticHosts() expr.ElasticHosts {
+	return sc.AnnotateConf.Hosts
 }
 
 // GetAnnotateIndex returns the name of the Elastic index that should be used for annotations

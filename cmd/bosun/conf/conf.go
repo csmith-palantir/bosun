@@ -31,6 +31,7 @@ import (
 type SystemConfProvider interface {
 	GetHTTPListen() string
 	GetHTTPSListen() string
+	GetBasePath() string
 	GetTLSCertFile() string
 	GetTLSKeyFile() string
 

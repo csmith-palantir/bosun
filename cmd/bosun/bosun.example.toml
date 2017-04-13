@@ -7,6 +7,9 @@ Hostname = "bosun.example.com"
 # The HTTP IP and Port to Listen on. Default is ":8070"
 HTTPListen = ":8080"
 
+# The path to attach Bosun to. Default is "/".
+#BasePath = "/bosun"
+
 # Alert checks are run by default every CheckFrequency * DefaultRunEvery. RunEvery can be overridden
 # by indivdual alerts. Defaults are "5m" and 1
 CheckFrequency = "1m"

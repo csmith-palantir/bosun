@@ -40,7 +40,7 @@ import (
 
 var (
 	indexTemplate func() *template.Template
-	router        = mux.NewRouter()
+	coreRouter    = mux.NewRouter()
 	schedule      = sched.DefaultSched
 	//InternetProxy is a url to use as a proxy when communicating with external services.
 	//currently only google's shortener.
@@ -51,6 +51,7 @@ var (
 	tokensEnabled bool
 	authEnabled   bool
 	startTime     time.Time
+	basePath      string
 )
 
 const (
@@ -76,8 +77,9 @@ func init() {
 		"HTTP response codes from the backend server for request relayed through Bosun.")
 }
 
-func Listen(httpAddr, httpsAddr, certFile, keyFile string, devMode bool, tsdbHost string, reloadFunc func() error, authConfig *conf.AuthConf, st time.Time) error {
+func Listen(httpAddr, httpsAddr, base, certFile, keyFile string, devMode bool, tsdbHost string, reloadFunc func() error, authConfig *conf.AuthConf, st time.Time) error {
 	startTime = st
+	basePath = base
 	if devMode {
 		slog.Infoln("using local web assets")
 	}
@@ -85,6 +87,12 @@ func Listen(httpAddr, httpsAddr, certFile, keyFile string, devMode bool, tsdbHos
 
 	if httpAddr == "" && httpsAddr == "" {
 		return fmt.Errorf("Either http or https address needs to be specified.")
+	}
+
+	router := coreRouter
+	if basePath != "" { 
+		miniprofiler.FullPath = basePath + miniprofiler.PATH
+		router = coreRouter.PathPrefix(basePath).Subrouter()
 	}
 
 	indexTemplate = func() *template.Template {
@@ -129,7 +137,7 @@ func Listen(httpAddr, httpsAddr, certFile, keyFile string, devMode bool, tsdbHos
 		handleFunc("/api/index", IndexTSDB, canPutData).Name("tsdb_index")
 		handle("/api/put", Relay(tsdbHost), canPutData).Name("tsdb_put")
 	}
-	router.PathPrefix("/auth/").Handler(auth.LoginHandler())
+	router.PathPrefix("/auth/").Handler(http.StripPrefix(basePath, auth.LoginHandler()))
 	handleFunc("/api/", APIRedirect, fullyOpen).Name("api_redir")
 	handle("/api/action", JSON(Action), canPerformActions).Name("action").Methods(POST)
 	handle("/api/alerts", JSON(Alerts), canViewDash).Name("alerts").Methods(GET)
@@ -189,7 +197,7 @@ func Listen(httpAddr, httpsAddr, certFile, keyFile string, devMode bool, tsdbHos
 
 	//auth specific stuff
 	if auth != nil {
-		router.PathPrefix("/login").Handler(http.StripPrefix("/login", auth.LoginHandler())).Name("auth")
+		router.PathPrefix("/login").Handler(http.StripPrefix(basePath + "/login", auth.LoginHandler())).Name("auth")
 	}
 	if tokens != nil {
 		handle("/api/tokens", tokens.AdminHandler(), canManageTokens).Name("tokens")
@@ -197,11 +205,11 @@ func Listen(httpAddr, httpsAddr, certFile, keyFile string, devMode bool, tsdbHos
 
 	router.Handle("/api/version", baseChain.ThenFunc(Version)).Name("version").Methods(GET)
 	fs := http.FileServer(webFS)
-	router.PathPrefix("/partials/").Handler(baseChain.Then(fs)).Name("partials")
-	router.PathPrefix("/static/").Handler(baseChain.Then(http.StripPrefix("/static/", fs))).Name("static")
-	router.PathPrefix("/favicon.ico").Handler(baseChain.Then(fs)).Name("favicon")
+	router.PathPrefix("/partials/").Handler(baseChain.Then(http.StripPrefix(basePath, fs))).Name("partials")
+	router.PathPrefix("/static/").Handler(baseChain.Then(http.StripPrefix(basePath + "/static/", fs))).Name("static")
+	router.PathPrefix("/favicon.ico").Handler(baseChain.Then(http.StripPrefix(basePath, fs))).Name("favicon")
 
-	var miniprofilerRoutes = http.StripPrefix(miniprofiler.PATH, http.HandlerFunc(miniprofiler.MiniProfilerHandler))
+	var miniprofilerRoutes = http.StripPrefix(basePath + miniprofiler.PATH, http.HandlerFunc(miniprofiler.MiniProfilerHandler))
 	router.PathPrefix(miniprofiler.PATH).Handler(baseChain.Then(miniprofilerRoutes)).Name("miniprofiler")
 
 	//MUST BE LAST!
@@ -325,6 +333,7 @@ type appSetings struct {
 type indexVariables struct {
 	Includes template.HTML
 	Settings string
+	BasePath string
 }
 
 func Index(t miniprofiler.Timer, w http.ResponseWriter, r *http.Request) (interface{}, error) {
@@ -363,9 +372,11 @@ func Index(t miniprofiler.Timer, w http.ResponseWriter, r *http.Request) (interf
 	if err != nil {
 		return nil, err
 	}
+
 	err = indexTemplate().Execute(w, indexVariables{
 		t.Includes(),
 		string(settings),
+		basePath,
 	})
 	if err != nil {
 		return nil, err

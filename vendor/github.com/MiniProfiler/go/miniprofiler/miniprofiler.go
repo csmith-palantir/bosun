@@ -61,6 +61,8 @@ var (
 	Version = "3.0.12"
 
 	staticFiles map[string][]byte
+
+	FullPath  = PATH
 )
 
 const (
@@ -75,7 +77,7 @@ var (
 )
 
 func init() {
-	http.Handle(PATH, http.StripPrefix(PATH, http.HandlerFunc(MiniProfilerHandler)))
+	http.Handle(FullPath, http.StripPrefix(FullPath, http.HandlerFunc(MiniProfilerHandler)))
 }
 
 // miniProfilerHandler serves requests to the /mini-profiler-resources/
@@ -122,7 +124,7 @@ func results(w http.ResponseWriter, r *http.Request) {
 		v := map[string]interface{}{
 			"name":     p.Name,
 			"duration": p.DurationMilliseconds,
-			"path":     PATH,
+			"path":     FullPath,
 			"json":     template.JS(j),
 			"includes": p.Includes(),
 			"version":  Version,
@@ -241,7 +243,7 @@ func (p *Profile) Includes() template.HTML {
 
 	v := map[string]interface{}{
 		"ids":                 current,
-		"path":                PATH,
+		"path":                FullPath,
 		"version":             Version,
 		"position":            Position,
 		"showTrivial":         ShowTrivial,

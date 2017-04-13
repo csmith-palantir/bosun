@@ -19,6 +19,7 @@ import (
 type SystemConf struct {
 	HTTPListen  string
 	HTTPSListen string
+	BasePath    string
 	TLSCertFile string
 	TLSKeyFile  string
 
@@ -261,6 +262,11 @@ func (sc *SystemConf) GetHTTPListen() string {
 // GetHTTPSListen returns the hostname:port that Bosun should listen on with tls
 func (sc *SystemConf) GetHTTPSListen() string {
 	return sc.HTTPSListen
+}
+
+// GetBasePath returns the path that Bosun should attach to
+func (sc *SystemConf) GetBasePath() string {
+	return sc.BasePath
 }
 
 // GetTLSCertFile returns the path to the tls certificate to listen with (pem format). Must be specified with HTTPSListen.

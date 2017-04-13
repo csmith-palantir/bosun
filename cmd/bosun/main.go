@@ -251,7 +251,7 @@ func main() {
 	ruleProvider.SetReload(reload)
 
 	go func() {
-		slog.Fatal(web.Listen(sysProvider.GetHTTPListen(), sysProvider.GetHTTPSListen(),
+		slog.Fatal(web.Listen(sysProvider.GetHTTPListen(), sysProvider.GetHTTPSListen(), sysProvider.GetBasePath(),
 			sysProvider.GetTLSCertFile(), sysProvider.GetTLSKeyFile(), *flagDev,
 			sysProvider.GetTSDBHost(), reload, sysProvider.GetAuthConf(), startTime))
 	}()

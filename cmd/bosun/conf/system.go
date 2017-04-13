@@ -10,9 +10,15 @@ import (
 	"bosun.org/cmd/bosun/expr"
 	"bosun.org/graphite"
 	"bosun.org/opentsdb"
+	"crypto/tls"
+	"crypto/x509"
+	"errors"
 	"github.com/BurntSushi/toml"
 	"github.com/influxdata/influxdb/client/v2"
+	"io/ioutil"
 )
+
+var tlsConfig *tls.Config
 
 // SystemConf contains all the information that bosun needs to run. Outside of the conf package
 // usage should be through conf.SystemConfProvider
@@ -51,6 +57,8 @@ type SystemConf struct {
 	AnnotateConf AnnotateConf
 
 	AuthConf *AuthConf
+
+	SecurityConf SecurityConf
 
 	EnableSave      bool
 	EnableReload    bool
@@ -107,6 +115,13 @@ type AnnotateConf struct {
 	Index string   // name of index / table
 }
 
+type SecurityConf struct {
+	SslCas         []string
+	SslKey         string
+	SslCertificate string
+	ServeTls       bool
+}
+
 // LogStashConf contains a list of elastic hosts for the depcrecated logstash functions
 type LogStashConf struct {
 	Hosts expr.LogstashElasticHosts
@@ -114,7 +129,10 @@ type LogStashConf struct {
 
 // ElasticConf contains configuration for an elastic host that Bosun can query
 type ElasticConf struct {
-	Hosts expr.ElasticHosts
+	Username string
+	Password string
+	UseTls   bool
+	Hosts    []string
 }
 
 // InfluxConf contains configuration for an influx host that Bosun can query
@@ -492,10 +510,65 @@ func (sc *SystemConf) GetInfluxContext() client.HTTPConfig {
 	if sc.md.IsDefined("InfluxConf", "Timeout") {
 		c.Timeout = sc.InfluxConf.Timeout.Duration
 	}
-	if sc.md.IsDefined("InfluxConf", "UnsafeSsl") {
-		c.InsecureSkipVerify = sc.InfluxConf.UnsafeSSL
+	if sc.md.IsDefined("SecurityConf") {
+		if tlsConf, err := sc.loadTLSConfig(); err == nil {
+			tlsConf.InsecureSkipVerify = sc.InfluxConf.UnsafeSSL
+			c.TLSConfig = tlsConf
+		}
 	}
+
 	return c
+}
+
+var defaultCipherSuites = []uint16{
+	// this cipher suite is included to enable http/2.  for details, see
+	// https://blog.bracelab.com/achieving-perfect-ssl-labs-score-with-go
+	tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+	tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+	tls.TLS_RSA_WITH_AES_256_GCM_SHA384,
+	tls.TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA,
+	tls.TLS_RSA_WITH_AES_256_CBC_SHA,
+}
+
+func (sc *SystemConf) loadTLSConfig() (*tls.Config, error) {
+	cert, err := tls.LoadX509KeyPair(sc.SecurityConf.SslCertificate, sc.SecurityConf.SslKey)
+	if err != nil {
+		return nil, errors.New(fmt.Sprintf("Failed to load Certificate from cert file %v and key %v", sc.SecurityConf.SslCertificate, sc.SecurityConf.SslKey))
+	}
+	tlsConfig = &tls.Config{
+		Certificates:             []tls.Certificate{cert},
+		MinVersion:               tls.VersionTLS12,
+		PreferServerCipherSuites: true,
+		CipherSuites:             defaultCipherSuites,
+		InsecureSkipVerify:       false,
+	}
+
+	if len(sc.SecurityConf.SslCas) == 0 {
+		return tlsConfig, nil
+	}
+	caCertPool, err := sc.buildCaCertPool()
+	if err != nil {
+		return nil, err
+	}
+
+	tlsConfig.RootCAs = caCertPool
+	tlsConfig.BuildNameToCertificate()
+
+	return tlsConfig, nil
+}
+
+func (sc *SystemConf) buildCaCertPool() (*x509.CertPool, error) {
+	caCertPool := x509.NewCertPool()
+	for _, caFile := range sc.SecurityConf.SslCas {
+		cert, err := ioutil.ReadFile(caFile)
+		if err != nil {
+			return nil, errors.New(fmt.Sprintf("Failed to load CA file from %v", caFile))
+		}
+
+		caCertPool.AppendCertsFromPEM(cert)
+	}
+
+	return caCertPool, nil
 }
 
 // GetLogstashContext returns a Logstash context which contains all the information needed
@@ -506,8 +579,20 @@ func (sc *SystemConf) GetLogstashContext() expr.LogstashElasticHosts {
 
 // GetElasticContext returns an Elastic context which contains all the information
 // needed to run Elastic queries.
-func (sc *SystemConf) GetElasticContext() expr.ElasticHosts {
-	return sc.ElasticConf.Hosts
+func (sc *SystemConf) GetElasticContext() expr.ElasticConf {
+	var tlsConfig *tls.Config
+	if sc.ElasticConf.UseTls && sc.md.IsDefined("SecurityConf") {
+		var err error
+		if tlsConfig, err = sc.loadTLSConfig(); err != nil {
+			tlsConfig = nil
+		}
+	}
+	return expr.ElasticConf{
+		Hosts:     sc.ElasticConf.Hosts,
+		Username:  sc.ElasticConf.Username,
+		Password:  sc.ElasticConf.Password,
+		TlsConfig: tlsConfig,
+	}
 }
 
 // AnnotateEnabled returns if annotations have been enabled or not

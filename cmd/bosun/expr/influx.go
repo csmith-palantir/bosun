@@ -13,6 +13,8 @@ import (
 	"github.com/influxdata/influxdb/client/v2"
 	"github.com/influxdata/influxdb/influxql"
 	influxModels "github.com/influxdata/influxdb/models"
+
+	"bosun.org/slog"
 )
 
 // Influx is a map of functions to query InfluxDB.
@@ -93,6 +95,8 @@ func InfluxQuery(e *State, T miniprofiler.Timer, db, query, startDuration, endDu
 
 // influxQueryDuration adds time WHERE clauses to query for the given start and end durations.
 func influxQueryDuration(now time.Time, query, start, end, groupByInterval string) (string, error) {
+        slog.Infoln(query)
+
 	sd, err := opentsdb.ParseDuration(start)
 	if err != nil {
 		return "", err

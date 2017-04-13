@@ -9,9 +9,11 @@ import (
 	"bosun.org/cmd/bosun/expr/parse"
 	"bosun.org/models"
 	"bosun.org/opentsdb"
+	"crypto/tls"
 	"github.com/MiniProfiler/go/miniprofiler"
 	"github.com/jinzhu/now"
 	elastic "gopkg.in/olivere/elastic.v3"
+	"net/http"
 )
 
 // This uses a global client since the elastic client handles connections
@@ -240,12 +242,37 @@ func ESLTE(e *State, T miniprofiler.Timer, key string, lte float64) (*Results, e
 // of the hosts in the config
 type ElasticHosts []string
 
+// ElasticConf contains the information to connect to the elasticsearch cluster via authenticated TLS.
+type ElasticConf struct {
+	Username  string
+	Password  string
+	TlsConfig *tls.Config
+	Hosts     ElasticHosts
+}
+
 // InitClient sets up the elastic client. If the client has already been
 // initalized it is a noop
-func (e ElasticHosts) InitClient() error {
+func (e ElasticConf) InitClient() error {
 	if esClient == nil {
 		var err error
-		esClient, err = elastic.NewClient(elastic.SetURL(e...), elastic.SetMaxRetries(10))
+		var clientOptions []elastic.ClientOptionFunc
+		clientOptions = append(clientOptions, elastic.SetURL(e.Hosts...), elastic.SetMaxRetries(10), elastic.SetSniff(false))
+		var httpClient *http.Client
+		if e.TlsConfig != nil {
+			httpClient = &http.Client{}
+			httpClient.Transport = &http.Transport{
+				TLSClientConfig:     e.TlsConfig,
+				MaxIdleConnsPerHost: 32,
+			}
+
+		}
+		clientOptions = append(clientOptions, elastic.SetHttpClient(httpClient))
+
+		if e.Username != "" && e.Password != "" {
+			clientOptions = append(clientOptions, elastic.SetBasicAuth(e.Username, e.Password))
+		}
+
+		esClient, err = elastic.NewClient(clientOptions...)
 		if err != nil {
 			return err
 		}
@@ -254,7 +281,7 @@ func (e ElasticHosts) InitClient() error {
 }
 
 // getService returns an elasticsearch service based on the global client
-func (e *ElasticHosts) getService() (*elastic.SearchService, error) {
+func (e *ElasticConf) getService() (*elastic.SearchService, error) {
 	err := e.InitClient()
 	if err != nil {
 		return nil, err
@@ -264,7 +291,7 @@ func (e *ElasticHosts) getService() (*elastic.SearchService, error) {
 
 // Query takes a Logstash request, applies it a search service, and then queries
 // elasticsearch.
-func (e ElasticHosts) Query(r *ElasticRequest) (*elastic.SearchResult, error) {
+func (e ElasticConf) Query(r *ElasticRequest) (*elastic.SearchResult, error) {
 	s, err := e.getService()
 	if err != nil {
 		return nil, err

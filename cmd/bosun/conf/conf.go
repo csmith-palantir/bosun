@@ -78,7 +78,7 @@ type SystemConfProvider interface {
 	GetGraphiteContext() graphite.Context
 	GetInfluxContext() client.HTTPConfig
 	GetLogstashContext() expr.LogstashElasticHosts
-	GetElasticContext() expr.ElasticHosts
+	GetElasticContext() expr.ElasticConf
 	AnnotateEnabled() bool
 
 	MakeLink(string, *url.Values) string
